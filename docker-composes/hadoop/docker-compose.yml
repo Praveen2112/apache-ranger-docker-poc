@@ -1,41 +1,13 @@
 version: "3"
 
 services:
-  namenode:
-    image: kadensungbincho/ranger-hadoop-namenode:2.0.0-hadoop3.2.1-java8-ranger2.1.0
-    container_name: namenode
-    hostname: namenode
-    restart: always
-    ports:
-      - 9870:9870
-      - 9000:9000
-    volumes:
-      - hadoop_namenode:/hadoop/dfs/name
-      - ./hdfs/install.properties:/opt/ranger-hdfs-plugin/install.properties
-    environment:
-      - CLUSTER_NAME=test
-    env_file:
-      - hadoop.env
-
-  datanode:
-    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
-    container_name: datanode
-    hostname: datanode
-    restart: always
-    volumes:
-      - hadoop_datanode:/hadoop/dfs/data
-    environment:
-      SERVICE_PRECONDITION: "namenode:9870"
-    env_file:
-      - hadoop.env
-
   resourcemanager:
     image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
     container_name: resourcemanager
     hostname: resourcemanager
     restart: always
-    environment:
-      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864"
+    depends_on:
+      - createbuckets
     env_file:
       - hadoop.env
 
@@ -45,7 +17,7 @@ services:
     hostname: nodemanager
     restart: always
     environment:
-      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
+      SERVICE_PRECONDITION: "resourcemanager:8088"
     env_file:
       - hadoop.env
 
@@ -55,16 +27,20 @@ services:
     hostname: historyserver
     restart: always
     environment:
-      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
+      SERVICE_PRECONDITION: "resourcemanager:8088"
     volumes:
       - hadoop_historyserver:/hadoop/yarn/timeline
     env_file:
       - hadoop.env
+    ports:
+      - 8188:8188
 
   hive-server:
     image: kadensungbincho/ranger-hive:2.0.0-hadoop3.2.1-java8-ranger2.1.0
     container_name: hive-server
     hostname: hive-server
+    depends_on:
+      - createbuckets
     volumes:
       - ./hive/install.properties:/opt/ranger-hive-plugin/install.properties
     env_file:
@@ -80,6 +56,8 @@ services:
     hostname: hive-metastore
     env_file:
       - ./hadoop.env
+    depends_on:
+      - createbuckets
     command: ["/run.sh", "metastore"]
     environment:
       SERVICE_PRECONDITION: "namenode:9000 datanode:9864 hive-db:3306"
@@ -96,21 +74,6 @@ services:
       MYSQL_DATABASE: metastore
       MYSQL_USER: hive
       MYSQL_PASSWORD: hive
-  presto:
-    image: kadensungbincho/ranger-presto:presto344-ranger2.1.0
-    container_name: presto
-    hostname: presto
-    volumes:
-      - ./presto/etc/catalog:/usr/lib/presto/etc/catalog
-      - ./presto/etc/config.properties:/usr/lib/presto/etc/config.properties
-      - ./presto/etc/jvm.config:/usr/lib/presto/etc/jvm.config
-      - ./presto/etc/log.properties:/usr/lib/presto/etc/log.properties
-      - ./presto/etc/node.properties:/usr/lib/presto/etc/node.properties
-      - ./presto/install.properties:/usr/lib/presto/ranger-presto-plugin/install.properties
-    environment:
-      SERVICE_PRECONDITION: "hive-metastore:9083"
-    ports:
-      - "8080:8080"
   # https://cwiki.apache.org/confluence/display/KNOX/Dynamic+HA+Provider+Configuration
   # https://community.cloudera.com/t5/Support-Questions/How-to-Enable-Zookeeper-Discovery-for-HiveServer2-HA/td-p/95392
   zoo:
@@ -120,9 +83,33 @@ services:
     ports:
       - 2181:2181
 
+  minio:
+    image: minio/minio:RELEASE.2022-05-26T05-48-41Z
+    container_name: minio
+    hostname: minio
+    volumes:
+      - /Users/praveenkrishna/tmp/data:/data
+    command: [ "server", "--address", "0.0.0.0:9080", "/data" ]
+    environment:
+      MINIO_ACCESS_KEY: "minio-access-key"
+      MINIO_SECRET_KEY: "minio-secret-key"
+      SERVICE_PRECONDITION: "minio:9080"
+    ports:
+      - "9080:9080"
+
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc config host add myminio http://minio:9080 minio-access-key minio-secret-key;
+      /usr/bin/mc rm -r --force myminio/data;
+      /usr/bin/mc mb myminio/data;
+      exit
+      "
+
 volumes:
-  hadoop_namenode:
-  hadoop_datanode:
   hadoop_historyserver:
 
 networks:
